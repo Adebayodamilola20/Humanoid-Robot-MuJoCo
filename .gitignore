@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# OS generated files
+.DS_Store
+
+# Large model files (optional, but good practice if you want to keep repo small)
+# humanoid_brain.zip

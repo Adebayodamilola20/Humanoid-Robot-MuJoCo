@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanoid-rl"
+version = "0.1.0"
+description = "Teach a MuJoCo humanoid to walk with deep reinforcement learning."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "adebayostephen", email = "adebayodamilola2007@gmail.com" }]
+keywords = ["reinforcement-learning", "mujoco", "humanoid", "ppo", "sac"]
+
+dependencies = [
+    "gymnasium[mujoco]>=1.0",
+    "stable-baselines3>=2.4",
+    "torch>=2.2",
+    "numpy>=1.26",
+    "tensorboard>=2.15",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.4",
+    "rich>=13.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+myo = ["myosuite>=2.9"]
+
+[project.scripts]
+humanoid-rl = "humanoid_rl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

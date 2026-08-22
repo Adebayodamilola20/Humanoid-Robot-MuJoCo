@@ -1,16 +1,23 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.egg-info/
+build/
+dist/
 
-# Virtual Environment
+# Environments
 .venv/
-env/
 venv/
+env/
 ENV/
 
-# OS generated files
-.DS_Store
+# Training output: checkpoints, logs, videos
+runs/
+*.mp4
+*.gif
 
-# Large model files (optional, but good practice if you want to keep repo small)
-# humanoid_brain.zip
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.log

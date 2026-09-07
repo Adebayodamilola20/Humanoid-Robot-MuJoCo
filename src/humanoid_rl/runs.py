@@ -67,7 +67,8 @@ def resolve_run(spec: str | Path | None, root: str | Path = RUNS_DIR) -> Path:
 
     candidate = Path(spec)
     if candidate.suffix == ".zip" and candidate.is_file():
-        return candidate.parent.parent if candidate.parent.name == "checkpoints" else candidate.parent
+        in_checkpoints = candidate.parent.name == "checkpoints"
+        return candidate.parent.parent if in_checkpoints else candidate.parent
 
     for path in (candidate, root / candidate):
         if path.is_dir():
@@ -129,8 +130,17 @@ def stats_path(run_dir: Path, model_path: Path | None = None) -> Path | None:
         if model_path.name == BEST_MODEL:
             candidates.append(run_dir / f"best_{VECNORM_FILE}")
         elif model_path.parent.name == "checkpoints":
-            stem = model_path.stem.replace("_steps", "")
-            candidates += sorted(model_path.parent.glob(f"{stem}*vecnormalize*.pkl"))
+            # SB3 writes `<prefix>_<steps>_steps.zip` next to
+            # `<prefix>_vecnormalize_<steps>_steps.pkl` -- note that the tag sits
+            # between the prefix and the step count, so the name has to be
+            # rebuilt rather than pattern-matched from the model's stem.
+            stem = model_path.stem
+            if stem.endswith("_steps"):
+                prefix, _, steps = stem[: -len("_steps")].rpartition("_")
+                if prefix and steps.isdigit():
+                    candidates.append(
+                        model_path.parent / f"{prefix}_vecnormalize_{steps}_steps.pkl"
+                    )
     candidates.append(run_dir / VECNORM_FILE)
     for path in candidates:
         if path.is_file():

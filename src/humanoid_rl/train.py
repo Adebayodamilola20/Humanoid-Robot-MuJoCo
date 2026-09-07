@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import signal
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,7 @@ from stable_baselines3.common.vec_env import VecEnv, VecNormalize
 from humanoid_rl import console, runs
 from humanoid_rl.config import Config
 from humanoid_rl.envs import VECNORM_FILE, build_env
+from humanoid_rl.tasks import DEFAULT_TASK
 
 ALGO_CLASSES: dict[str, type[BaseAlgorithm]] = {"ppo": PPO, "sac": SAC}
 
@@ -126,18 +130,58 @@ def _build_callbacks(cfg: Config, run_dir: Path) -> CallbackList:
     return CallbackList([eval_cb, checkpoint_cb])
 
 
-def _save(model: BaseAlgorithm, run_dir: Path) -> None:
+def _save(model: BaseAlgorithm, run_dir: Path, cfg: Config | None = None) -> None:
     model.save(str(run_dir / runs.FINAL_MODEL))
     vec_env = model.get_vec_normalize_env()
     if isinstance(vec_env, VecNormalize):
         vec_env.save(str(run_dir / VECNORM_FILE))
+    if cfg is not None:
+        # Record the true step count now that we know it, so `config.json`
+        # describes the policy sitting next to it.
+        cfg.trained_steps = int(model.num_timesteps)
+        cfg.save(run_dir / runs.CONFIG_FILE)
+
+
+@contextmanager
+def save_on_termination() -> Iterator[None]:
+    """Make `kill <pid>` save the policy instead of discarding it.
+
+    `model.learn` already saves on Ctrl-C, but that only covers SIGINT. A run
+    stopped by anything else -- a process manager, a shutdown, an out-of-memory
+    reaper -- dies without writing `final_model.zip`, which is exactly how two
+    multi-hour runs on this project ended with no final policy.
+
+    Re-raising SIGTERM as `KeyboardInterrupt` routes it into the save path that
+    already exists rather than duplicating it.
+
+    SIGKILL (`kill -9`) cannot be intercepted by any process. The periodic
+    checkpoints remain the only defence against that, which is why
+    `checkpoint_freq` matters more than it looks.
+    """
+
+    def handler(signum, frame):  # noqa: ARG001 - signal handler signature
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGTERM, handler)
+    except ValueError:
+        # Signal handlers can only be installed on the main thread; a worker
+        # thread simply goes without one.
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def train(cfg: Config, resume: Path | None = None) -> Path:
     """Run training to completion and return the run directory.
 
-    Ctrl-C is treated as "stop here, keep what you have" rather than as an
-    error: the policy is saved before the process exits.
+    Being stopped is treated as "keep what you have" rather than as an error:
+    both Ctrl-C and SIGTERM save the policy before exiting. Only SIGKILL can
+    still lose work, and the periodic checkpoints cover that.
     """
     set_random_seed(cfg.seed)
 
@@ -148,10 +192,13 @@ def train(cfg: Config, resume: Path | None = None) -> Path:
         run_dir = runs.create_run_dir(cfg)
         console.rule("Training")
 
-    console.key_values(
-        "Run",
+    summary = {"environment": cfg.env_id}
+    # `walk` means "no wrapper, use the environment's own objective", which is
+    # not worth a line -- and would read as wrong for e.g. HumanoidStandup-v5.
+    if cfg.task != DEFAULT_TASK:
+        summary["task"] = cfg.task
+    summary.update(
         {
-            "environment": cfg.env_id,
             "algorithm": cfg.algo.upper(),
             "timesteps": cfg.total_timesteps,
             "parallel envs": cfg.n_envs,
@@ -159,19 +206,27 @@ def train(cfg: Config, resume: Path | None = None) -> Path:
             "device": cfg.device,
             "seed": cfg.seed,
             "run dir": runs.relative(run_dir),
-        },
+        }
     )
+    console.key_values("Run", summary)
+
+    # Resolve the checkpoint before the environment, so the observation
+    # statistics can be matched to it. A run that was killed rather than
+    # interrupted leaves no `final_model.zip`/`vecnormalize.pkl` pair, and
+    # loading none would silently restart normalisation from scratch --
+    # discarding the whole run's statistics without raising anything.
+    resume_model = runs.find_model(run_dir, prefer="final") if resume is not None else None
 
     env = build_env(
         cfg,
         training=True,
         monitor_dir=run_dir / "monitor",
-        stats_path=run_dir / VECNORM_FILE if resume else None,
+        stats_path=runs.stats_path(run_dir, resume_model) if resume_model else None,
     )
 
     try:
         if resume is not None:
-            model_path = runs.find_model(run_dir, prefer="final")
+            model_path = resume_model
             console.info(f"Loading policy from [bold]{runs.relative(model_path)}[/]")
             model = load_model(model_path, cfg, env=env)
             model.tensorboard_log = str(run_dir / "tb")
@@ -184,16 +239,17 @@ def train(cfg: Config, resume: Path | None = None) -> Path:
 
         started = time.monotonic()
         try:
-            model.learn(
-                total_timesteps=cfg.total_timesteps,
-                callback=_build_callbacks(cfg, run_dir),
-                reset_num_timesteps=resume is None,
-                progress_bar=console.has_progress_bar() and not runs.is_ci(),
-            )
+            with save_on_termination():
+                model.learn(
+                    total_timesteps=cfg.total_timesteps,
+                    callback=_build_callbacks(cfg, run_dir),
+                    reset_num_timesteps=resume is None,
+                    progress_bar=console.has_progress_bar() and not runs.is_ci(),
+                )
         except KeyboardInterrupt:
-            console.warn("Interrupted - saving the policy trained so far.")
+            console.warn("Stopped early - saving the policy trained so far.")
         finally:
-            _save(model, run_dir)
+            _save(model, run_dir, cfg)
 
         elapsed = time.monotonic() - started
         console.success(
@@ -201,7 +257,9 @@ def train(cfg: Config, resume: Path | None = None) -> Path:
             f"({model.num_timesteps / max(elapsed, 1e-9):,.0f} steps/s)"
         )
         console.info(f"Saved to [bold]{runs.relative(run_dir)}[/]")
-        console.info(f"Watch it: [bold]python -m humanoid_rl play --run {runs.relative(run_dir)}[/]")
+        console.info(
+            f"Watch it: [bold]python -m humanoid_rl play --run {runs.relative(run_dir)}[/]"
+        )
     finally:
         env.close()
 

@@ -1,0 +1,296 @@
+<!--
+  Humanoid-v5 on a street, with a body you can actually read as a person.
+
+  IMPORTANT: every physical property here is identical to Gymnasium's stock
+  `humanoid.xml` -- same bodies, joints, collision geoms, tendons, actuators,
+  masses and inertias. A policy trained on the stock model runs on this one
+  unchanged.
+
+  That is achieved two ways:
+
+    * The original collision geoms are still here, untouched apart from
+      `rgba` alpha 0, which is a rendering property only. They still collide.
+    * Everything added for looks carries `density="0" contype="0"
+      conaffinity="0"`. The model sets `inertiafromgeom="true"`, so a geom with
+      density 0 contributes no mass and no inertia -- it is pure decoration.
+
+  `tests/test_scene.py` asserts the equivalence rather than trusting this note.
+
+  The humanoid walks along +X, so the road runs along X and the buildings sit
+  off to either side in Y.
+-->
+<mujoco model="humanoid_street">
+    <compiler angle="degree" inertiafromgeom="true"/>
+    <default>
+        <joint armature="1" damping="1" limited="true"/>
+        <geom conaffinity="1" condim="1" contype="1" margin="0.001" material="geom" rgba="0.8 0.6 .4 1"/>
+        <motor ctrllimited="true" ctrlrange="-.4 .4"/>
+        <!-- Everything decorative inherits this: no mass, no collisions. -->
+        <default class="skin">
+            <geom conaffinity="0" contype="0" density="0" group="1" material="" rgba="0.87 0.69 0.55 1"/>
+        </default>
+        <default class="shirt">
+            <geom conaffinity="0" contype="0" density="0" group="1" material="" rgba="0.20 0.38 0.68 1"/>
+        </default>
+        <default class="trousers">
+            <geom conaffinity="0" contype="0" density="0" group="1" material="" rgba="0.17 0.19 0.28 1"/>
+        </default>
+        <default class="shoe">
+            <geom conaffinity="0" contype="0" density="0" group="1" material="" rgba="0.11 0.11 0.13 1"/>
+        </default>
+        <default class="hair">
+            <geom conaffinity="0" contype="0" density="0" group="1" material="" rgba="0.13 0.09 0.07 1"/>
+        </default>
+        <default class="scenery">
+            <geom conaffinity="0" contype="0" density="0" group="2" material=""/>
+        </default>
+    </default>
+    <option integrator="RK4" iterations="50" solver="PGS" timestep="0.003"/>
+    <size nkey="5" nuser_geom="1"/>
+    <visual>
+        <map fogend="120" fogstart="60"/>
+        <quality shadowsize="8192" offsamples="8"/>
+        <headlight ambient="0.45 0.45 0.5" diffuse="0.5 0.5 0.5" specular="0.1 0.1 0.1"/>
+    </visual>
+
+    <asset>
+        <texture builtin="gradient" height="256" rgb1="0.35 0.55 0.85" rgb2="0.85 0.9 0.95"
+                 type="skybox" width="256"/>
+        <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom"
+                 random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+        <texture builtin="checker" height="300" name="texasphalt" rgb1="0.22 0.22 0.24"
+                 rgb2="0.26 0.26 0.28" type="2d" width="300"/>
+
+        <material name="geom" texture="texgeom" texuniform="true"/>
+        <material name="MatPlane" reflectance="0.05" shininess="0.1" specular="0.1"
+                  texrepeat="40 40" texture="texasphalt"/>
+        <material name="road" reflectance="0.08" rgba="0.17 0.17 0.19 1" shininess="0.3"/>
+        <material name="paint" rgba="0.93 0.90 0.35 1"/>
+        <material name="kerb" rgba="0.72 0.72 0.70 1"/>
+        <material name="pavement" rgba="0.62 0.62 0.60 1"/>
+
+        <material name="skin" rgba="0.87 0.69 0.55 1"/>
+        <material name="hair" rgba="0.13 0.09 0.07 1"/>
+        <material name="shirt" rgba="0.20 0.38 0.68 1"/>
+        <material name="trousers" rgba="0.17 0.19 0.28 1"/>
+        <material name="shoe" rgba="0.11 0.11 0.13 1"/>
+
+        <material name="brickA" rgba="0.62 0.36 0.30 1"/>
+        <material name="brickB" rgba="0.50 0.45 0.42 1"/>
+        <material name="glassA" rgba="0.42 0.55 0.62 1"/>
+        <material name="glassB" rgba="0.32 0.42 0.52 1"/>
+        <material name="concrete" rgba="0.70 0.68 0.64 1"/>
+        <material name="window" rgba="0.75 0.85 0.92 1"/>
+    </asset>
+
+    <worldbody>
+        <light cutoff="120" diffuse="0.9 0.9 0.85" dir="-0.06 0.12 -1" directional="true"
+               exponent="1" pos="6 -3 30" specular="0.25 0.25 0.25" castshadow="true"/>
+
+        <!-- Unchanged collision plane: same condim, same friction, same name. -->
+        <geom condim="3" friction="1 .1 .1" material="MatPlane" name="floor" pos="0 0 0"
+              rgba="0.56 0.55 0.52 1" size="80 40 0.125" type="plane"/>
+
+        <!-- ---------------------------------------------------- the street -->
+        <geom class="scenery" rgba="0.17 0.17 0.19 1" pos="20 0 0.01" size="70 4.5 0.01" type="box"/>
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="20 4.7 0.06" size="70 0.2 0.06" type="box"/>
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="20 -4.7 0.06" size="70 0.2 0.06" type="box"/>
+        <geom class="scenery" rgba="0.66 0.65 0.63 1" pos="20 7.5 0.05" size="70 2.8 0.05" type="box"/>
+        <geom class="scenery" rgba="0.66 0.65 0.63 1" pos="20 -8.5 0.05" size="70 3.8 0.05" type="box"/>
+
+        <!-- Centre line, dashed, running the length of the road. -->
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="-8 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="-2 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="4 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="10 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="16 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="22 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="28 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="34 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="40 0 0.025" size="1.4 0.09 0.005" type="box"/>
+        <geom class="scenery" rgba="0.93 0.90 0.35 1" pos="46 0 0.025" size="1.4 0.09 0.005" type="box"/>
+
+        <!-- ------------------------------------------------ left-hand side -->
+        <geom class="scenery" rgba="0.62 0.36 0.30 1" pos="-6 12 6" size="5 3.5 6" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="-6 8.45 7.5" size="4.2 0.05 1.1" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="-6 8.45 4.2" size="4.2 0.05 1.1" type="box"/>
+
+        <geom class="scenery" rgba="0.42 0.55 0.62 1" pos="6 13 10" size="5.5 4 10" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="6 8.95 12" size="4.6 0.05 2.4" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="6 8.95 6" size="4.6 0.05 2.4" type="box"/>
+
+        <geom class="scenery" rgba="0.72 0.70 0.66 1" pos="19 11.5 4.5" size="5.5 3 4.5" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="19 8.45 5.4" size="4.6 0.05 1.4" type="box"/>
+
+        <geom class="scenery" rgba="0.50 0.45 0.42 1" pos="32 12.5 8" size="6 3.5 8" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="32 8.95 10" size="5 0.05 1.8" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="32 8.95 5" size="5 0.05 1.8" type="box"/>
+
+        <geom class="scenery" rgba="0.30 0.40 0.52 1" pos="46 13 13" size="6 4 13" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="46 8.95 15" size="5 0.05 3" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="46 8.95 8" size="5 0.05 3" type="box"/>
+
+        <!-- ----------------------------------------------- right-hand side -->
+        <geom class="scenery" rgba="0.30 0.40 0.52 1" pos="-4 -12.5 9" size="4.5 3.5 9" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="-4 -8.95 11" size="3.7 0.05 2" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="-4 -8.95 6" size="3.7 0.05 2" type="box"/>
+
+        <geom class="scenery" rgba="0.50 0.45 0.42 1" pos="8 -11.5 5.5" size="5.5 3 5.5" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="8 -8.45 6.6" size="4.6 0.05 1.5" type="box"/>
+
+        <geom class="scenery" rgba="0.72 0.70 0.66 1" pos="21 -13 11" size="6 4 11" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="21 -8.95 13" size="5 0.05 2.6" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="21 -8.95 7" size="5 0.05 2.6" type="box"/>
+
+        <geom class="scenery" rgba="0.62 0.36 0.30 1" pos="35 -11.5 6.5" size="5.5 3 6.5" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="35 -8.45 8" size="4.6 0.05 1.6" type="box"/>
+
+        <geom class="scenery" rgba="0.42 0.55 0.62 1" pos="48 -13 15" size="6 4 15" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="48 -8.95 17" size="5 0.05 3.2" type="box"/>
+        <geom class="scenery" rgba="0.78 0.88 0.95 1" pos="48 -8.95 10" size="5 0.05 3.2" type="box"/>
+
+        <!-- Street lamps, for a sense of scale and motion as it passes them. -->
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="0 5.4 2.5" size="0.08 0.08 2.5" type="box"/>
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="12 5.4 2.5" size="0.08 0.08 2.5" type="box"/>
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="24 5.4 2.5" size="0.08 0.08 2.5" type="box"/>
+        <geom class="scenery" rgba="0.72 0.72 0.70 1" pos="36 5.4 2.5" size="0.08 0.08 2.5" type="box"/>
+
+        <!-- ================================================================
+             The humanoid. Physics below is byte-for-byte the stock model;
+             the only additions are `class="skin"` and friends, which are
+             massless and non-colliding.
+             ================================================================ -->
+        <body name="torso" pos="0 0 1.4">
+            <camera name="track" mode="trackcom" pos="0 -6.6 0.5" xyaxes="1 0 0 0 0.11 1"/>
+            <camera name="side" mode="trackcom" pos="0 -7 1.5" xyaxes="1 0 0 0 0.3 1"/>
+            <joint armature="0" damping="0" limited="false" name="root" pos="0 0 0" stiffness="0" type="free"/>
+            <geom fromto="0 -.07 0 0 .07 0" name="torso1" rgba="0 0 0 0" size="0.07" type="capsule"/>
+            <geom name="head" pos="0 0 .19" rgba="0 0 0 0" size=".09" type="sphere" user="258"/>
+            <geom fromto="-.01 -.06 -.12 -.01 .06 -.12" name="uwaist" rgba="0 0 0 0" size="0.06" type="capsule"/>
+
+            <!-- chest, shoulders, neck, head -->
+            <geom class="shirt" type="box" pos="0 0 -0.02" size="0.10 0.15 0.15"/>
+            <geom class="shirt" type="sphere" pos="0 -0.15 0.03" size="0.075"/>
+            <geom class="shirt" type="sphere" pos="0 0.15 0.03" size="0.075"/>
+            <geom class="shirt" type="box" pos="-0.005 0 -0.15" size="0.085 0.115 0.06"/>
+            <geom class="skin" type="capsule" fromto="0 0 0.09 0 0 0.13" size="0.035"/>
+            <geom class="skin" type="sphere" pos="0 0 0.2" size="0.088"/>
+            <geom class="skin" type="box" pos="0.06 0 0.19" size="0.035 0.045 0.05"/>
+            <geom class="hair" type="sphere" pos="-0.012 0 0.225" size="0.086"/>
+            <geom class="hair" type="box" pos="0.055 0 0.235" size="0.04 0.07 0.022"/>
+            <!-- eyes, so the direction of travel reads at a glance -->
+            <geom class="hair" type="sphere" pos="0.075 -0.036 0.205" size="0.014"/>
+            <geom class="hair" type="sphere" pos="0.075 0.036 0.205" size="0.014"/>
+
+            <body name="lwaist" pos="-.01 0 -0.260" quat="1.000 0 -0.002 0">
+                <geom fromto="0 -.06 0 0 .06 0" name="lwaist" rgba="0 0 0 0" size="0.06" type="capsule"/>
+                <geom class="shirt" type="box" pos="0 0 -0.02" size="0.075 0.10 0.09"/>
+                <joint armature="0.02" axis="0 0 1" damping="5" name="abdomen_z" pos="0 0 0.065" range="-45 45" stiffness="20" type="hinge"/>
+                <joint armature="0.02" axis="0 1 0" damping="5" name="abdomen_y" pos="0 0 0.065" range="-75 30" stiffness="10" type="hinge"/>
+                <body name="pelvis" pos="0 0 -0.165" quat="1.000 0 -0.002 0">
+                    <joint armature="0.02" axis="1 0 0" damping="5" name="abdomen_x" pos="0 0 0.1" range="-35 35" stiffness="10" type="hinge"/>
+                    <geom fromto="-.02 -.07 0 -.02 .07 0" name="butt" rgba="0 0 0 0" size="0.09" type="capsule"/>
+                    <geom class="trousers" type="box" pos="-0.015 0 -0.01" size="0.085 0.125 0.085"/>
+
+                    <body name="right_thigh" pos="0 -0.1 -0.04">
+                        <joint armature="0.01" axis="1 0 0" damping="5" name="right_hip_x" pos="0 0 0" range="-25 5" stiffness="10" type="hinge"/>
+                        <joint armature="0.01" axis="0 0 1" damping="5" name="right_hip_z" pos="0 0 0" range="-60 35" stiffness="10" type="hinge"/>
+                        <joint armature="0.0080" axis="0 1 0" damping="5" name="right_hip_y" pos="0 0 0" range="-110 20" stiffness="20" type="hinge"/>
+                        <geom fromto="0 0 0 0 0.01 -.34" name="right_thigh1" rgba="0 0 0 0" size="0.06" type="capsule"/>
+                        <geom class="trousers" type="capsule" fromto="0 0 0.02 0 0.01 -.34" size="0.072"/>
+                        <body name="right_shin" pos="0 0.01 -0.403">
+                            <joint armature="0.0060" axis="0 -1 0" name="right_knee" pos="0 0 .02" range="-160 -2" type="hinge"/>
+                            <geom fromto="0 0 0 0 0 -.3" name="right_shin1" rgba="0 0 0 0" size="0.049" type="capsule"/>
+                            <geom class="trousers" type="capsule" fromto="0 0 0.01 0 0 -.16" size="0.058"/>
+                            <geom class="skin" type="capsule" fromto="0 0 -.16 0 0 -.3" size="0.05"/>
+                            <body name="right_foot" pos="0 0 -0.45">
+                                <geom name="right_foot" pos="0 0 0.1" rgba="0 0 0 0" size="0.075" type="sphere" user="0"/>
+                                <geom class="shoe" type="box" pos="0.035 0 0.075" size="0.115 0.052 0.042"/>
+                            </body>
+                        </body>
+                    </body>
+
+                    <body name="left_thigh" pos="0 0.1 -0.04">
+                        <joint armature="0.01" axis="-1 0 0" damping="5" name="left_hip_x" pos="0 0 0" range="-25 5" stiffness="10" type="hinge"/>
+                        <joint armature="0.01" axis="0 0 -1" damping="5" name="left_hip_z" pos="0 0 0" range="-60 35" stiffness="10" type="hinge"/>
+                        <joint armature="0.01" axis="0 1 0" damping="5" name="left_hip_y" pos="0 0 0" range="-110 20" stiffness="20" type="hinge"/>
+                        <geom fromto="0 0 0 0 -0.01 -.34" name="left_thigh1" rgba="0 0 0 0" size="0.06" type="capsule"/>
+                        <geom class="trousers" type="capsule" fromto="0 0 0.02 0 -0.01 -.34" size="0.072"/>
+                        <body name="left_shin" pos="0 -0.01 -0.403">
+                            <joint armature="0.0060" axis="0 -1 0" name="left_knee" pos="0 0 .02" range="-160 -2" stiffness="1" type="hinge"/>
+                            <geom fromto="0 0 0 0 0 -.3" name="left_shin1" rgba="0 0 0 0" size="0.049" type="capsule"/>
+                            <geom class="trousers" type="capsule" fromto="0 0 0.01 0 0 -.16" size="0.058"/>
+                            <geom class="skin" type="capsule" fromto="0 0 -.16 0 0 -.3" size="0.05"/>
+                            <body name="left_foot" pos="0 0 -0.45">
+                                <geom name="left_foot" pos="0 0 0.1" rgba="0 0 0 0" size="0.075" type="sphere" user="0"/>
+                                <geom class="shoe" type="box" pos="0.035 0 0.075" size="0.115 0.052 0.042"/>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+
+            <body name="right_upper_arm" pos="0 -0.17 0.06">
+                <joint armature="0.0068" axis="2 1 1" name="right_shoulder1" pos="0 0 0" range="-85 60" stiffness="1" type="hinge"/>
+                <joint armature="0.0051" axis="0 -1 1" name="right_shoulder2" pos="0 0 0" range="-85 60" stiffness="1" type="hinge"/>
+                <geom fromto="0 0 0 .16 -.16 -.16" name="right_uarm1" rgba="0 0 0 0" size="0.04 0.16" type="capsule"/>
+                <geom class="shirt" type="capsule" fromto="0 0 0 .09 -.09 -.09" size="0.052"/>
+                <geom class="skin" type="capsule" fromto=".09 -.09 -.09 .16 -.16 -.16" size="0.045"/>
+                <body name="right_lower_arm" pos=".18 -.18 -.18">
+                    <joint armature="0.0028" axis="0 -1 1" name="right_elbow" pos="0 0 0" range="-90 50" stiffness="0" type="hinge"/>
+                    <geom fromto="0.01 0.01 0.01 .17 .17 .17" name="right_larm" rgba="0 0 0 0" size="0.031" type="capsule"/>
+                    <geom name="right_hand" pos=".18 .18 .18" rgba="0 0 0 0" size="0.04" type="sphere"/>
+                    <geom class="skin" type="capsule" fromto="0.01 0.01 0.01 .17 .17 .17" size="0.038"/>
+                    <geom class="skin" type="sphere" pos=".18 .18 .18" size="0.046"/>
+                    <camera pos="0 0 0"/>
+                </body>
+            </body>
+
+            <body name="left_upper_arm" pos="0 0.17 0.06">
+                <joint armature="0.0068" axis="2 -1 1" name="left_shoulder1" pos="0 0 0" range="-60 85" stiffness="1" type="hinge"/>
+                <joint armature="0.0051" axis="0 1 1" name="left_shoulder2" pos="0 0 0" range="-60 85" stiffness="1" type="hinge"/>
+                <geom fromto="0 0 0 .16 .16 -.16" name="left_uarm1" rgba="0 0 0 0" size="0.04 0.16" type="capsule"/>
+                <geom class="shirt" type="capsule" fromto="0 0 0 .09 .09 -.09" size="0.052"/>
+                <geom class="skin" type="capsule" fromto=".09 .09 -.09 .16 .16 -.16" size="0.045"/>
+                <body name="left_lower_arm" pos=".18 .18 -.18">
+                    <joint armature="0.0028" axis="0 -1 -1" name="left_elbow" pos="0 0 0" range="-90 50" stiffness="0" type="hinge"/>
+                    <geom fromto="0.01 -0.01 0.01 .17 -.17 .17" name="left_larm" rgba="0 0 0 0" size="0.031" type="capsule"/>
+                    <geom name="left_hand" pos=".18 -.18 .18" rgba="0 0 0 0" size="0.04" type="sphere"/>
+                    <geom class="skin" type="capsule" fromto="0.01 -0.01 0.01 .17 -.17 .17" size="0.038"/>
+                    <geom class="skin" type="sphere" pos=".18 -.18 .18" size="0.046"/>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <tendon>
+        <fixed name="left_hipknee">
+            <joint coef="-1" joint="left_hip_y"/>
+            <joint coef="1" joint="left_knee"/>
+        </fixed>
+        <fixed name="right_hipknee">
+            <joint coef="-1" joint="right_hip_y"/>
+            <joint coef="1" joint="right_knee"/>
+        </fixed>
+    </tendon>
+
+    <actuator>
+        <motor gear="100" joint="abdomen_y" name="abdomen_y"/>
+        <motor gear="100" joint="abdomen_z" name="abdomen_z"/>
+        <motor gear="100" joint="abdomen_x" name="abdomen_x"/>
+        <motor gear="100" joint="right_hip_x" name="right_hip_x"/>
+        <motor gear="100" joint="right_hip_z" name="right_hip_z"/>
+        <motor gear="300" joint="right_hip_y" name="right_hip_y"/>
+        <motor gear="200" joint="right_knee" name="right_knee"/>
+        <motor gear="100" joint="left_hip_x" name="left_hip_x"/>
+        <motor gear="100" joint="left_hip_z" name="left_hip_z"/>
+        <motor gear="300" joint="left_hip_y" name="left_hip_y"/>
+        <motor gear="200" joint="left_knee" name="left_knee"/>
+        <motor gear="25" joint="right_shoulder1" name="right_shoulder1"/>
+        <motor gear="25" joint="right_shoulder2" name="right_shoulder2"/>
+        <motor gear="25" joint="right_elbow" name="right_elbow"/>
+        <motor gear="25" joint="left_shoulder1" name="left_shoulder1"/>
+        <motor gear="25" joint="left_shoulder2" name="left_shoulder2"/>
+        <motor gear="25" joint="left_elbow" name="left_elbow"/>
+    </actuator>
+</mujoco>

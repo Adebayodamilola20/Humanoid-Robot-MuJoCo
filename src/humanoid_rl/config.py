@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from humanoid_rl.tasks import DEFAULT_TASK, parse_tasks
+
 DEFAULT_ENV = "Humanoid-v5"
 
 # Tuned starting points, adapted from the RL Baselines3 Zoo results for the
@@ -69,6 +71,7 @@ class Config:
     """A single training run, fully described."""
 
     env_id: str = DEFAULT_ENV
+    task: str = DEFAULT_TASK
     algo: str = "ppo"
     total_timesteps: int = 10_000_000
     n_envs: int = 8
@@ -80,7 +83,14 @@ class Config:
     eval_episodes: int = 5
     checkpoint_freq: int = 250_000
 
+    # How far the run actually got. `total_timesteps` is the budget that was
+    # asked for, and on a resume it means "this many *more*" -- neither tells
+    # you how much training the saved policy has behind it. Written after every
+    # save, so it stays true even for a run that was stopped early.
+    trained_steps: int = 0
+
     hyperparams: dict[str, Any] = field(default_factory=dict)
+    task_kwargs: dict[str, Any] = field(default_factory=dict)
 
     # ---------------------------------------------------------------- builders
 
@@ -114,6 +124,15 @@ class Config:
                 raise ValueError(f"unknown config field {key!r}")
             setattr(cfg, key, value)
 
+        # SAC's zoo hyperparameters assume a single collector. With more
+        # environments every step gathers more transitions, so the gradient
+        # steps have to scale with them or the replay ratio quietly drops and
+        # SAC becomes n_envs times less sample-efficient. An explicit
+        # `--set gradient_steps=N` still wins, since user hyperparameters are
+        # merged on top of this.
+        if cfg.algo == "sac" and cfg.n_envs > 1:
+            cfg.hyperparams["gradient_steps"] = cfg.n_envs
+
         cfg.hyperparams.update(hyperparams or {})
         cfg.validate()
         return cfg
@@ -139,11 +158,16 @@ class Config:
             raise ValueError("n_envs must be >= 1")
         if self.total_timesteps < 1:
             raise ValueError("total_timesteps must be >= 1")
-        if self.algo == "sac" and self.n_envs > 1:
-            # Legal, but the zoo hyperparameters assume a single collector.
-            self.hyperparams.setdefault("gradient_steps", self.n_envs)
+        parse_tasks(self.task)  # raises with a useful message on a bad spec
 
     @property
     def slug(self) -> str:
-        """Filesystem-friendly identity, e.g. `humanoid-v5-ppo`."""
-        return f"{self.env_id.lower().replace('_', '-')}-{self.algo}"
+        """Filesystem-friendly identity, e.g. `humanoid-v5-velocity-natural-ppo`.
+
+        Combined tasks are comma-separated in the config but hyphenated here --
+        a comma in a directory name is legal and a nuisance to type or quote.
+        """
+        env = self.env_id.lower().replace("_", "-")
+        names = parse_tasks(self.task)
+        task = f"-{'-'.join(names)}" if names else ""
+        return f"{env}{task}-{self.algo}"

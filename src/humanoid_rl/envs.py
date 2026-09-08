@@ -23,8 +23,37 @@ from stable_baselines3.common.vec_env import (
 )
 
 from humanoid_rl.config import Config
+from humanoid_rl.tasks import DEFAULT_TASK, wrap_task
 
 VECNORM_FILE = "vecnormalize.pkl"
+
+ASSETS_DIR = Path(__file__).parent / "assets"
+
+# Alternative scenes for the MuJoCo humanoid. These change appearance only --
+# see the header of `humanoid_street.xml` and `tests/test_scene.py`, which
+# asserts the physics is identical to the stock model. That is what lets a
+# policy trained on `default` be viewed in `street` without retraining.
+SCENES: dict[str, Path | None] = {
+    "default": None,
+    "street": ASSETS_DIR / "humanoid_street.xml",
+}
+
+
+def scene_kwargs(scene: str | None) -> dict:
+    """`gym.make` keyword arguments selecting a scene."""
+    if not scene or scene == "default":
+        return {}
+    try:
+        path = SCENES[scene]
+    except KeyError:
+        raise SystemExit(
+            f"Unknown scene {scene!r}. Choose from: {', '.join(SCENES)}"
+        ) from None
+    if path is None:
+        return {}
+    if not path.is_file():  # pragma: no cover - only if the package is broken
+        raise SystemExit(f"Scene file is missing: {path}")
+    return {"xml_file": str(path.resolve())}
 
 
 def ensure_registered(env_id: str) -> None:
@@ -49,14 +78,30 @@ def make_env_fn(
     rank: int = 0,
     render_mode: str | None = None,
     monitor_dir: str | Path | None = None,
+    task: str = DEFAULT_TASK,
+    task_kwargs: dict | None = None,
+    make_kwargs: dict | None = None,
 ) -> Callable[[], gym.Env]:
-    """Return a thunk that builds one seeded, monitored environment."""
+    """Return a thunk that builds one seeded, monitored environment.
+
+    `make_kwargs` reaches `gym.make` -- MuJoCo environments accept `width`
+    and `height` there, which renders straight to the target size instead of
+    downscaling afterwards.
+    """
 
     def _init() -> gym.Env:
         ensure_registered(env_id)
-        env = gym.make(env_id, render_mode=render_mode)
+        env = gym.make(env_id, render_mode=render_mode, **(make_kwargs or {}))
+        # Task wrapper goes on *inside* Monitor, so the episode rewards written
+        # to `monitor/` are the shaped rewards actually being optimised rather
+        # than the stock forward-velocity ones.
+        env = wrap_task(env, task, task_kwargs)
         monitor_path = str(Path(monitor_dir) / f"worker-{rank}") if monitor_dir else None
-        env = Monitor(env, filename=monitor_path)
+        # `override_existing=True` (SB3's default) truncates the CSV, so
+        # resuming a run silently destroys every episode logged before it. Run
+        # directories are timestamped, so these files only ever pre-exist on a
+        # resume -- appending is correct in both cases.
+        env = Monitor(env, filename=monitor_path, override_existing=False)
         env.reset(seed=seed + rank)
         env.action_space.seed(seed + rank)
         return env
@@ -74,6 +119,7 @@ def build_env(
     stats_path: str | Path | None = None,
     monitor_dir: str | Path | None = None,
     force_dummy: bool = False,
+    make_kwargs: dict | None = None,
 ) -> VecEnv:
     """Build the vectorised environment, optionally wrapped in `VecNormalize`.
 
@@ -85,7 +131,13 @@ def build_env(
     seed = cfg.seed if seed is None else seed
 
     ensure_registered(cfg.env_id)
-    fns = [make_env_fn(cfg.env_id, seed, i, render_mode, monitor_dir) for i in range(n_envs)]
+    fns = [
+        make_env_fn(
+            cfg.env_id, seed, i, render_mode, monitor_dir, cfg.task, cfg.task_kwargs,
+            make_kwargs,
+        )
+        for i in range(n_envs)
+    ]
 
     if n_envs > 1 and not force_dummy:
         # MuJoCo + fork is a known source of silent hangs on macOS.
@@ -121,6 +173,34 @@ def env_dt(venv: VecEnv, fallback: float = 1 / 60) -> float:
         return float(venv.get_attr("dt")[0])
     except Exception:
         return fallback
+
+
+def patch_viewer_camera_controls() -> None:
+    """Make the viewer's mouse controls survive the MuJoCo 3.12 API change.
+
+    Gymnasium 1.3 calls `mjv_moveCamera(model, action, dx, dy, scene, camera)`,
+    the signature MuJoCo used before 3.12; 3.12 dropped the scene argument. The
+    mismatch only bites inside GLFW's mouse callbacks, so the window opens fine
+    and then dies with a `TypeError` the moment you drag or scroll -- which
+    looks like a crash in the policy rather than in the camera.
+
+    Wrapping the function to accept both shapes fixes it without pinning either
+    package to an older release.
+    """
+    import mujoco
+
+    original = mujoco.mjv_moveCamera
+    if getattr(original, "_humanoid_rl_patched", False):
+        return
+
+    def move_camera(model, action, reldx, reldy, *rest):
+        try:
+            return original(model, action, reldx, reldy, rest[-1])
+        except TypeError:
+            return original(model, action, reldx, reldy, *rest)
+
+    move_camera._humanoid_rl_patched = True
+    mujoco.mjv_moveCamera = move_camera
 
 
 def require_interactive_viewer() -> None:

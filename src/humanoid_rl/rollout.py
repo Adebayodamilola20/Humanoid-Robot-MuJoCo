@@ -9,7 +9,13 @@ import numpy as np
 
 from humanoid_rl import console, runs
 from humanoid_rl.config import Config
-from humanoid_rl.envs import build_env, env_dt, require_interactive_viewer
+from humanoid_rl.envs import (
+    build_env,
+    env_dt,
+    patch_viewer_camera_controls,
+    require_interactive_viewer,
+    scene_kwargs,
+)
 
 
 def _load(run_dir: Path, prefer: str):
@@ -19,7 +25,23 @@ def _load(run_dir: Path, prefer: str):
     return cfg, model_path
 
 
-def _make_env(cfg: Config, run_dir: Path, model_path: Path, render_mode: str | None, seed: int):
+def writer_fps(fps: int, every: int) -> int:
+    """Frame rate for a subsampled recording, so playback stays real-time.
+
+    Keeping every Nth frame and writing at the original rate would play the
+    video back N times too fast.
+    """
+    return max(fps // max(every, 1), 1)
+
+
+def _make_env(
+    cfg: Config,
+    run_dir: Path,
+    model_path: Path,
+    render_mode: str | None,
+    seed: int,
+    make_kwargs: dict | None = None,
+):
     return build_env(
         cfg,
         n_envs=1,
@@ -28,10 +50,13 @@ def _make_env(cfg: Config, run_dir: Path, model_path: Path, render_mode: str | N
         training=False,
         stats_path=runs.stats_path(run_dir, model_path),
         force_dummy=True,
+        make_kwargs=make_kwargs,
     )
 
 
-def _rollout(model, env, episodes: int, deterministic: bool, on_step=None) -> list[tuple[float, int]]:
+def _rollout(
+    model, env, episodes: int, deterministic: bool, on_step=None, quiet: bool = False
+) -> list[tuple[float, int]]:
     """Run `episodes` full episodes, returning (reward, length) for each.
 
     Rewards are read from the Monitor wrapper so they are true environment
@@ -57,7 +82,8 @@ def _rollout(model, env, episodes: int, deterministic: bool, on_step=None) -> li
             true_reward = float(episode["r"]) if episode else reward_sum
             true_length = int(episode["l"]) if episode else length
             results.append((true_reward, true_length))
-            console.episode_row(len(results), episodes, true_reward, true_length)
+            if not quiet:
+                console.episode_row(len(results), episodes, true_reward, true_length)
             reward_sum, length = 0.0, 0
             state = None
     return results
@@ -98,14 +124,20 @@ def play(
     prefer: str = "best",
     seed: int = 0,
     realtime: bool = True,
+    scene: str | None = None,
 ) -> dict[str, float]:
-    """Open a MuJoCo window and watch the policy act."""
+    """Open a MuJoCo window and watch the policy act.
+
+    `scene` swaps the model's appearance only, so any trained policy can be
+    viewed in any scene without retraining.
+    """
     require_interactive_viewer()
+    patch_viewer_camera_controls()
     run_dir = runs.resolve_run(run)
     cfg, model_path = _load(run_dir, prefer)
 
     console.rule(f"Playing {runs.relative(model_path)}")
-    env = _make_env(cfg, run_dir, model_path, "human", seed)
+    env = _make_env(cfg, run_dir, model_path, "human", seed, scene_kwargs(scene))
 
     from humanoid_rl.train import load_model
 
@@ -136,9 +168,21 @@ def record(
     prefer: str = "best",
     seed: int = 0,
     fps: int = 30,
+    width: int | None = None,
+    height: int | None = None,
+    every: int = 1,
+    scene: str | None = None,
 ) -> Path:
-    """Render episodes to a video file (no window needed - works over SSH)."""
+    """Render episodes to a video file (no window needed - works over SSH).
+
+    `width`/`height` render straight to that size, and `every` keeps only every
+    Nth frame -- together they make a GIF small enough to sit in a README. The
+    writer's frame rate is divided by `every` so playback stays real-time.
+    """
     import imageio.v2 as imageio
+
+    if every < 1:
+        raise SystemExit("--every must be >= 1")
 
     run_dir = runs.resolve_run(run)
     cfg, model_path = _load(run_dir, prefer)
@@ -153,15 +197,22 @@ def record(
             console.warn("imageio-ffmpeg not installed - writing a GIF instead.")
 
     console.rule(f"Recording {runs.relative(model_path)}")
-    env = _make_env(cfg, run_dir, model_path, "rgb_array", seed)
+    make_kwargs = {k: v for k, v in (("width", width), ("height", height)) if v}
+    make_kwargs.update(scene_kwargs(scene))
+    env = _make_env(cfg, run_dir, model_path, "rgb_array", seed, make_kwargs)
 
     from humanoid_rl.train import load_model
 
     model = load_model(model_path, cfg, device="cpu")
-    writer = imageio.get_writer(str(out_path), fps=fps)
+    writer = imageio.get_writer(str(out_path), fps=writer_fps(fps, every))
+
+    frame_index = 0
 
     def grab(vec_env) -> None:
-        writer.append_data(np.asarray(vec_env.env_method("render")[0]))
+        nonlocal frame_index
+        if frame_index % every == 0:
+            writer.append_data(np.asarray(vec_env.env_method("render")[0]))
+        frame_index += 1
 
     try:
         results = _rollout(model, env, episodes, deterministic=True, on_step=grab)
@@ -175,6 +226,35 @@ def record(
 
 
 # --------------------------------------------------------------------- eval
+
+
+def score_checkpoint(
+    run_dir: Path,
+    model_path: Path,
+    episodes: int = 10,
+    deterministic: bool = True,
+    seed: int = 0,
+    quiet: bool = True,
+) -> dict[str, float]:
+    """Score one specific checkpoint file, without printing every episode.
+
+    `evaluate` selects a checkpoint by preference (best/final/last); this takes
+    an exact path, which is what comparing several of them needs. Each is paired
+    with its own normalisation statistics via `runs.stats_path` -- comparing a
+    policy against the wrong statistics would rank them by accident rather than
+    by quality.
+    """
+    cfg = Config.load(run_dir / runs.CONFIG_FILE)
+    env = _make_env(cfg, run_dir, model_path, None, seed)
+
+    from humanoid_rl.train import load_model
+
+    model = load_model(model_path, cfg, device="cpu")
+    try:
+        results = _rollout(model, env, episodes, deterministic, quiet=quiet)
+    finally:
+        env.close()
+    return _summarise(results)
 
 
 def evaluate(

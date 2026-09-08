@@ -16,6 +16,10 @@ runs/
 *.mp4
 *.gif
 
+# ...except demo media committed on purpose for the README
+!assets/*.gif
+!assets/*.mp4
+
 # Editors / OS
 .DS_Store
 .vscode/

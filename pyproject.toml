@@ -26,12 +26,23 @@ dependencies = [
 
 [project.optional-dependencies]
 myo = ["myosuite>=2.9"]
+dev = ["pytest>=8.0", "ruff>=0.6", "matplotlib>=3.8"]
 
 [project.scripts]
 humanoid-rl = "humanoid_rl.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+humanoid_rl = ["assets/*.xml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: builds a MuJoCo environment or trains; excluded with -m 'not slow'",
+]
 
 [tool.ruff]
 line-length = 100

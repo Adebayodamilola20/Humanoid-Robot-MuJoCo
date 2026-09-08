@@ -71,7 +71,10 @@ def key_values(title: str, data: dict[str, Any]) -> None:
 
 
 def episode_row(index: int, total: int, reward: float, length: int) -> None:
-    info(f"  episode [bold]{index}/{total}[/]  reward [bold]{reward:9.1f}[/]  steps [bold]{length:5d}[/]")
+    info(
+        f"  episode [bold]{index}/{total}[/]  reward [bold]{reward:9.1f}[/]  "
+        f"steps [bold]{length:5d}[/]"
+    )
 
 
 def _fmt(value: Any) -> str:

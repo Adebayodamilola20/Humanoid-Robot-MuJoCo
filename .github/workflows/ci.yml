@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system libraries for headless MuJoCo
+        run: sudo apt-get update && sudo apt-get install -y libosmesa6-dev libgl1 libglfw3
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch. The default wheels drag in the CUDA runtime, which
+          # on a GPU-less runner segfaults while importing torch._dynamo -- the
+          # process dies with exit 139 and takes pytest's summary with it.
+          # These policies are MLP-sized and train on CPU anyway.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e '.[dev]'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        # MuJoCo needs an offscreen GL context on a headless runner.
+        env:
+          MUJOCO_GL: osmesa
+          CI: "1"
+        # -v and a short traceback, because a crash mid-run otherwise leaves no
+        # record of which test was at fault.
+        run: pytest -v --tb=short

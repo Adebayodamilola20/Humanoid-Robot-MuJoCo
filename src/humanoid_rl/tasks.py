@@ -360,13 +360,35 @@ def wrap_task(
     when combining, e.g. `{"velocity": {...}, "natural": {...}}`.
     """
     names = parse_tasks(task)
+    kwargs = dict(task_kwargs or {})
+
+    # Treat the mapping as keyed only when every key names a real task, so a
+    # flat option that happens to hold a dict is not mistaken for one.
+    keyed = bool(kwargs) and set(kwargs) <= set(WRAPPERS) and all(
+        isinstance(value, dict) for value in kwargs.values()
+    )
+
+    # Silently dropping options is the failure worth guarding against here:
+    # `task_kwargs` is stored in `config.json`, so a setting that goes nowhere
+    # produces a run that disagrees with its own record of itself.
+    if keyed:
+        unused = sorted(set(kwargs) - set(names))
+        if unused:
+            raise ValueError(
+                f"task_kwargs configures {', '.join(unused)}, which "
+                f"{'is' if len(unused) == 1 else 'are'} not part of task {task!r}"
+            )
+    elif kwargs and len(names) != 1:
+        target = names[0] if names else "velocity"
+        raise ValueError(
+            f"task {task!r} applies {len(names)} tasks, so task_kwargs must be keyed "
+            f"by task name, e.g. {{{target!r}: {{...}}}}"
+        )
+
     if not names:
         return env
 
-    kwargs = task_kwargs or {}
-    keyed = all(isinstance(value, dict) for value in kwargs.values()) and bool(kwargs)
-
     for name in names:
-        options = kwargs.get(name, {}) if keyed else (kwargs if len(names) == 1 else {})
+        options = kwargs.get(name, {}) if keyed else kwargs
         env = WRAPPERS[name](env, **options)
     return env

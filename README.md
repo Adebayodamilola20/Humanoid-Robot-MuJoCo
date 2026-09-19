@@ -3,11 +3,12 @@
 Teach a MuJoCo humanoid to walk with deep reinforcement learning — one CLI, reproducible runs, and a policy you can actually watch.
 
 <p align="center">
-  <img src="assets/humanoid-street.gif" alt="A MuJoCo humanoid walking down a street, trained with PPO" width="440">
+  <img src="assets/humanoid-walk-natural.gif" alt="A MuJoCo humanoid walking down a street, trained with PPO" width="440">
 </p>
 
 <p align="center">
-  <em>PPO after 15.1M steps — 10,092 reward over 868 steps, rendered with <code>--scene street</code>.</em>
+  <em>PPO after 15M steps of <code>--task velocity,natural</code> — walking at 1.35 m/s,
+  5° from upright, for the full 1000-step episode. Rendered with <code>--scene street</code>.</em>
 </p>
 
 ```bash
@@ -128,6 +129,37 @@ upper bound, and nothing at all about posture.
 leaving the objective alone. `velocity` removes the incentive to sprint by asking
 for a *specific* speed. Together, `--task velocity,natural` asks for a walk instead
 of a sprint and for tidy posture while doing it.
+
+### What that actually changed
+
+Two runs, 15M steps each, same machine and hyperparameters — only the task differs:
+
+```bash
+python -m humanoid_rl train --task velocity,natural --task-set velocity.speed_range='(0.8,1.8)' --steps 15e6
+```
+
+| | `walk` | `velocity,natural` | a person |
+| --- | --- | --- | --- |
+| forward speed | 5.49 m/s | **1.35 m/s** | ~1.4 m/s |
+| torso lean | 30.9° | **5.0°** | ~0° |
+| sideways drift | 1.52 m/s | **0.10 m/s** | ~0 |
+| arm joint speed | 2.59 rad/s | **0.64 rad/s** | still |
+| mean episode length | 671 / 1000 | 561 / 1000 | — |
+
+And it follows the command rather than memorising one speed:
+
+| commanded | achieved |
+| --- | --- |
+| 0.8 m/s | 0.82 |
+| 1.0 m/s | 0.99 |
+| 1.3 m/s | 1.28 |
+| 1.6 m/s | 1.55 |
+| 1.8 m/s | 1.57 — saturates here |
+
+**The honest cost:** mean episode length fell from 671 to 561. Walking upright at a
+commanded speed is a harder problem than falling forward fast, and it falls
+somewhat more often. Reward is not comparable between the two — the reward
+function itself is different.
 
 The weights are deliberately mild. Penalties strong enough to force good posture
 immediately also stop the policy learning to walk at all — standing still scores

@@ -68,6 +68,40 @@ def _override(value: str) -> tuple[str, Any]:
     return key.strip(), parsed
 
 
+def _task_override(value: str) -> tuple[str | None, str, Any]:
+    """Parse a task option: `key=value`, or `task.key=value` when combining.
+
+    `--task-set speed_range=(0.8,2.0)` configures the only task in play;
+    `--task-set velocity.speed_range=(0.8,2.0)` names which one, for a spec
+    like `velocity,natural`.
+    """
+    key, parsed = _override(value)
+    if "." in key:
+        task, _, option = key.partition(".")
+        task, option = task.strip(), option.strip()
+        if not task or not option:
+            raise argparse.ArgumentTypeError(f"expected task.key=value, got {value!r}")
+        return task, option, parsed
+    return None, key, parsed
+
+
+def _collect_task_kwargs(pairs: list[tuple[str | None, str, Any]]) -> dict[str, Any]:
+    """Fold `--task-set` pairs into the shape `task_kwargs` expects."""
+    if not pairs:
+        return {}
+    if any(task for task, _, _ in pairs) and any(task is None for task, _, _ in pairs):
+        raise ValueError(
+            "--task-set: either qualify every option with a task name, or none of them"
+        )
+    if pairs[0][0] is None:
+        return {option: value for _, option, value in pairs}
+
+    keyed: dict[str, Any] = {}
+    for task, option, value in pairs:
+        keyed.setdefault(task, {})[option] = value
+    return keyed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="humanoid-rl",
@@ -117,6 +151,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="continue an existing run (default: latest)")
     train_p.add_argument("--set", type=_override, action="append", default=[], metavar="KEY=VALUE",
                          dest="hyperparams", help="override a hyperparameter, repeatable")
+    train_p.add_argument("--task-set", type=_task_override, action="append", default=[],
+                         metavar="[TASK.]KEY=VALUE", dest="task_kwargs",
+                         help="configure the task, e.g. speed_range=(0.8,2.0); "
+                              "qualify with a task name when combining tasks")
 
     # ----------------------------------------------------------------- play
     play_p = sub.add_parser("play", help="watch a trained policy in a window")
@@ -219,6 +257,10 @@ def _resume_config(resume_dir, args: argparse.Namespace) -> Config:
             setattr(cfg, field, value)
     if args.hyperparams:
         cfg.hyperparams.update(dict(args.hyperparams))
+    if args.task_kwargs:
+        # The task itself is locked on resume, but retuning its weights is a
+        # legitimate reason to continue a run.
+        cfg.task_kwargs = _collect_task_kwargs(args.task_kwargs)
 
     cfg.validate()
     return cfg
@@ -245,6 +287,7 @@ def _cmd_train(args: argparse.Namespace) -> None:
                 "eval_freq": args.eval_freq,
                 "eval_episodes": args.eval_episodes,
                 "checkpoint_freq": args.checkpoint_freq,
+                "task_kwargs": _collect_task_kwargs(args.task_kwargs) or None,
             },
             hyperparams=dict(args.hyperparams),
         )

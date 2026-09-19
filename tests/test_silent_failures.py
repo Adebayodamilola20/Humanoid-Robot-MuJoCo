@@ -131,6 +131,79 @@ def test_a_flat_option_holding_a_dict_is_not_mistaken_for_keying():
         env.close()
 
 
+# ---------------------------------------------------------------- --task-set
+
+
+def _task_kwargs(*flags):
+    from humanoid_rl.cli import _collect_task_kwargs, build_parser
+
+    args = build_parser().parse_args(["train", *flags])
+    return _collect_task_kwargs(args.task_kwargs)
+
+
+def test_task_kwargs_were_unreachable_before_this_flag():
+    """Config carried, validated and stored task_kwargs with no way to set it."""
+    assert _task_kwargs("--task", "natural", "--task-set", "arm_cost_weight=0.4") == {
+        "arm_cost_weight": 0.4
+    }
+
+
+def test_task_set_qualified_by_task_name():
+    assert _task_kwargs(
+        "--task", "velocity,natural",
+        "--task-set", "velocity.speed_range=(0.8,2.0)",
+        "--task-set", "natural.tilt_cost_weight=3.0",
+    ) == {"velocity": {"speed_range": (0.8, 2.0)}, "natural": {"tilt_cost_weight": 3.0}}
+
+
+def test_task_set_parses_literals_not_strings():
+    kwargs = _task_kwargs(
+        "--task", "natural",
+        "--task-set", "arm_cost_weight=0.4",
+        "--task-set", "tilt_cost_weight=2",
+    )
+    assert isinstance(kwargs["arm_cost_weight"], float)
+    assert isinstance(kwargs["tilt_cost_weight"], int)
+
+
+def test_task_set_rejects_mixing_qualified_and_bare():
+    with pytest.raises(ValueError, match="every option with a task name"):
+        _task_kwargs(
+            "--task", "velocity,natural",
+            "--task-set", "speed_range=(1,2)",
+            "--task-set", "natural.tilt_cost_weight=3",
+        )
+
+
+@pytest.mark.parametrize("bad", ["speed_range", ".x=1", "velocity.=1"])
+def test_task_set_rejects_malformed(bad):
+    from humanoid_rl.cli import _task_override
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        _task_override(bad)
+
+
+def test_config_rejects_task_kwargs_that_would_be_ignored():
+    """Caught when the config is built, not inside a training worker."""
+    from humanoid_rl.config import Config
+
+    with pytest.raises(ValueError, match="not part of task"):
+        Config.build("ppo", overrides={"task": "natural", "task_kwargs": {"goal": {"x": 1}}})
+
+
+def test_config_accepts_matching_task_kwargs():
+    from humanoid_rl.config import Config
+
+    cfg = Config.build(
+        "ppo",
+        overrides={
+            "task": "velocity,natural",
+            "task_kwargs": {"velocity": {"speed_range": (1, 2)}},
+        },
+    )
+    assert cfg.task_kwargs["velocity"]["speed_range"] == (1, 2)
+
+
 # ------------------------------------------------------------------- resume
 
 

@@ -359,6 +359,26 @@ def wrap_task(
     `task_kwargs` may be flat (applied to a single task) or keyed by task name
     when combining, e.g. `{"velocity": {...}, "natural": {...}}`.
     """
+    names, kwargs, keyed = validate_task_kwargs(task, task_kwargs)
+    if not names:
+        return env
+
+    for name in names:
+        options = kwargs.get(name, {}) if keyed else kwargs
+        env = WRAPPERS[name](env, **options)
+    return env
+
+
+def validate_task_kwargs(
+    task: str | None, task_kwargs: dict[str, Any] | None = None
+) -> tuple[list[str], dict[str, Any], bool]:
+    """Check a task spec and its options without needing an environment.
+
+    Returns the task names, the options, and whether those options are keyed by
+    task name. Separate from `wrap_task` so the CLI can reject a bad spec before
+    a run directory exists, rather than inside a worker process once training
+    has already started.
+    """
     names = parse_tasks(task)
     kwargs = dict(task_kwargs or {})
 
@@ -384,11 +404,4 @@ def wrap_task(
             f"task {task!r} applies {len(names)} tasks, so task_kwargs must be keyed "
             f"by task name, e.g. {{{target!r}: {{...}}}}"
         )
-
-    if not names:
-        return env
-
-    for name in names:
-        options = kwargs.get(name, {}) if keyed else kwargs
-        env = WRAPPERS[name](env, **options)
-    return env
+    return names, kwargs, keyed

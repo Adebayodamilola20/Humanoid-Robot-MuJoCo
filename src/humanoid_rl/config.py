@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from humanoid_rl.tasks import DEFAULT_TASK, parse_tasks
+from humanoid_rl.tasks import DEFAULT_TASK, parse_tasks, validate_task_kwargs
 
 DEFAULT_ENV = "Humanoid-v5"
 
@@ -158,7 +158,9 @@ class Config:
             raise ValueError("n_envs must be >= 1")
         if self.total_timesteps < 1:
             raise ValueError("total_timesteps must be >= 1")
-        parse_tasks(self.task)  # raises with a useful message on a bad spec
+        # Raises with a useful message on a bad spec, or on options that would
+        # never reach a wrapper.
+        validate_task_kwargs(self.task, self.task_kwargs)
 
     @property
     def slug(self) -> str:

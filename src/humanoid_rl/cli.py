@@ -41,6 +41,21 @@ def _steps(value: str) -> int:
         raise argparse.ArgumentTypeError(f"expected a number of steps, got {value!r}") from None
 
 
+def _positive(value: str) -> int:
+    """A count that must be at least 1.
+
+    Without this, `--episodes 0` reaches numpy and dies inside a reduction over
+    an empty array, several frames deep in someone else's library.
+    """
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {number}")
+    return number
+
+
 def _override(value: str) -> tuple[str, Any]:
     """Parse `key=value` hyperparameter overrides, e.g. --set learning_rate=1e-4."""
     if "=" not in value:
@@ -51,6 +66,40 @@ def _override(value: str) -> tuple[str, Any]:
     except (ValueError, SyntaxError):
         parsed = raw
     return key.strip(), parsed
+
+
+def _task_override(value: str) -> tuple[str | None, str, Any]:
+    """Parse a task option: `key=value`, or `task.key=value` when combining.
+
+    `--task-set speed_range=(0.8,2.0)` configures the only task in play;
+    `--task-set velocity.speed_range=(0.8,2.0)` names which one, for a spec
+    like `velocity,natural`.
+    """
+    key, parsed = _override(value)
+    if "." in key:
+        task, _, option = key.partition(".")
+        task, option = task.strip(), option.strip()
+        if not task or not option:
+            raise argparse.ArgumentTypeError(f"expected task.key=value, got {value!r}")
+        return task, option, parsed
+    return None, key, parsed
+
+
+def _collect_task_kwargs(pairs: list[tuple[str | None, str, Any]]) -> dict[str, Any]:
+    """Fold `--task-set` pairs into the shape `task_kwargs` expects."""
+    if not pairs:
+        return {}
+    if any(task for task, _, _ in pairs) and any(task is None for task, _, _ in pairs):
+        raise ValueError(
+            "--task-set: either qualify every option with a task name, or none of them"
+        )
+    if pairs[0][0] is None:
+        return {option: value for _, option, value in pairs}
+
+    keyed: dict[str, Any] = {}
+    for task, option, value in pairs:
+        keyed.setdefault(task, {})[option] = value
+    return keyed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add_playback_args(p: argparse.ArgumentParser, episodes: int, scene: bool = False) -> None:
         p.add_argument("--run", default=None, metavar="RUN",
                        help="run directory or name (default: latest)")
-        p.add_argument("--episodes", type=int, default=episodes, help=f"default: {episodes}")
+        p.add_argument("--episodes", type=_positive, default=episodes, help=f"default: {episodes}")
         p.add_argument("--model", choices=("best", "final", "last"), default="best",
                        help="which checkpoint to load (default: best)")
         p.add_argument("--seed", type=int, default=0)
@@ -78,17 +127,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---------------------------------------------------------------- train
     train_p = sub.add_parser("train", help="train a policy")
-    train_p.add_argument("--env", default=DEFAULT_ENV, metavar="ID",
+    train_p.add_argument("--env", default=None, metavar="ID",
                          help=f"Gymnasium environment id (default: {DEFAULT_ENV})")
     train_p.add_argument("--task", default=None, metavar="TASK[,TASK...]",
                          help=f"what to ask the humanoid to do; combine with commas. "
                               f"one of: {', '.join(TASKS)} (default: walk)")
-    train_p.add_argument("--algo", choices=ALGOS, default="ppo", help="default: ppo")
+    train_p.add_argument("--algo", choices=ALGOS, default=None, help="default: ppo")
     train_p.add_argument("--steps", type=_steps, default=None, dest="total_timesteps",
                          help="total environment steps (default: per-algorithm)")
     train_p.add_argument("--n-envs", type=int, default=None, dest="n_envs",
                          help="parallel environments (default: per-algorithm)")
-    train_p.add_argument("--seed", type=int, default=0)
+    train_p.add_argument("--seed", type=int, default=None)
     train_p.add_argument("--device", default=None, help="cpu, cuda, mps or auto")
     norm = train_p.add_mutually_exclusive_group()
     norm.add_argument("--normalize", dest="normalize", action="store_true", default=None,
@@ -96,12 +145,16 @@ def build_parser() -> argparse.ArgumentParser:
     norm.add_argument("--no-normalize", dest="normalize", action="store_false",
                       help="disable observation normalisation")
     train_p.add_argument("--eval-freq", type=_steps, default=None, dest="eval_freq")
-    train_p.add_argument("--eval-episodes", type=int, default=None, dest="eval_episodes")
+    train_p.add_argument("--eval-episodes", type=_positive, default=None, dest="eval_episodes")
     train_p.add_argument("--checkpoint-freq", type=_steps, default=None, dest="checkpoint_freq")
     train_p.add_argument("--resume", nargs="?", const="latest", default=None, metavar="RUN",
                          help="continue an existing run (default: latest)")
     train_p.add_argument("--set", type=_override, action="append", default=[], metavar="KEY=VALUE",
                          dest="hyperparams", help="override a hyperparameter, repeatable")
+    train_p.add_argument("--task-set", type=_task_override, action="append", default=[],
+                         metavar="[TASK.]KEY=VALUE", dest="task_kwargs",
+                         help="configure the task, e.g. speed_range=(0.8,2.0); "
+                              "qualify with a task name when combining tasks")
 
     # ----------------------------------------------------------------- play
     play_p = sub.add_parser("play", help="watch a trained policy in a window")
@@ -119,7 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     rec_p.add_argument("--width", type=int, default=None,
                        help="render width in pixels (default: the environment's own)")
     rec_p.add_argument("--height", type=int, default=None, help="render height in pixels")
-    rec_p.add_argument("--every", type=int, default=1, metavar="N",
+    rec_p.add_argument("--every", type=_positive, default=1, metavar="N",
                        help="keep only every Nth frame, for a smaller GIF (default: 1)")
 
     # ----------------------------------------------------------------- eval
@@ -131,9 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_p = sub.add_parser("compare", help="score several checkpoints and rank them")
     cmp_p.add_argument("--run", default=None, metavar="RUN",
                        help="run directory or name (default: latest)")
-    cmp_p.add_argument("--episodes", type=int, default=10,
+    cmp_p.add_argument("--episodes", type=_positive, default=10,
                        help="episodes per checkpoint (default: 10)")
-    cmp_p.add_argument("--limit", type=int, default=6,
+    cmp_p.add_argument("--limit", type=_positive, default=6,
                        help="how many checkpoints to sample (default: 6)")
     cmp_p.add_argument("--seed", type=int, default=0)
 
@@ -152,18 +205,77 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Settings a resumed run cannot adopt: they define the policy's own shape or
+# the problem it was trained on, so changing them mid-run would load weights
+# into an environment they do not fit.
+RESUME_LOCKED = (
+    ("env_id", "--env", "env"),
+    ("task", "--task", "task"),
+    ("algo", "--algo", "algo"),
+    ("normalize", "--normalize/--no-normalize", "normalize"),
+)
+
+# Settings a resumed run can adopt: how much more to train, how much machinery
+# to throw at it, and how often to look.
+RESUME_APPLIES = (
+    ("total_timesteps", "total_timesteps"),
+    ("n_envs", "n_envs"),
+    ("device", "device"),
+    ("seed", "seed"),
+    ("eval_freq", "eval_freq"),
+    ("eval_episodes", "eval_episodes"),
+    ("checkpoint_freq", "checkpoint_freq"),
+)
+
+
+def _resume_config(resume_dir, args: argparse.Namespace) -> Config:
+    """Load a run's config and apply the flags a resume can honour.
+
+    Previously every flag but `--steps` was discarded without a word, so
+    `--resume latest --set learning_rate=1e-5` trained at the old rate and
+    `--n-envs 4` kept using eight. Asking for something and silently getting
+    something else is the failure this project keeps finding; here it is
+    either applied or refused.
+    """
+    cfg = Config.load(resume_dir / runs.CONFIG_FILE)
+
+    conflicts = [
+        f"  {flag}: the run used {getattr(cfg, field)!r}, you asked for {requested!r}"
+        for field, flag, attr in RESUME_LOCKED
+        if (requested := getattr(args, attr)) is not None and requested != getattr(cfg, field)
+    ]
+    if conflicts:
+        raise SystemExit(
+            "These cannot change when resuming -- the saved policy is built around them:\n"
+            + "\n".join(conflicts)
+            + "\n\nStart a new run instead, or drop the flag to continue as before."
+        )
+
+    for field, attr in RESUME_APPLIES:
+        value = getattr(args, attr)
+        if value is not None:
+            setattr(cfg, field, value)
+    if args.hyperparams:
+        cfg.hyperparams.update(dict(args.hyperparams))
+    if args.task_kwargs:
+        # The task itself is locked on resume, but retuning its weights is a
+        # legitimate reason to continue a run.
+        cfg.task_kwargs = _collect_task_kwargs(args.task_kwargs)
+
+    cfg.validate()
+    return cfg
+
+
 def _cmd_train(args: argparse.Namespace) -> None:
     from humanoid_rl.train import train
 
     resume_dir = runs.resolve_run(args.resume) if args.resume else None
 
     if resume_dir is not None:
-        cfg = Config.load(resume_dir / runs.CONFIG_FILE)
-        if args.total_timesteps is not None:
-            cfg.total_timesteps = args.total_timesteps
+        cfg = _resume_config(resume_dir, args)
     else:
         cfg = Config.build(
-            args.algo,
+            args.algo or "ppo",
             overrides={
                 "env_id": args.env,
                 "task": args.task,
@@ -175,6 +287,7 @@ def _cmd_train(args: argparse.Namespace) -> None:
                 "eval_freq": args.eval_freq,
                 "eval_episodes": args.eval_episodes,
                 "checkpoint_freq": args.checkpoint_freq,
+                "task_kwargs": _collect_task_kwargs(args.task_kwargs) or None,
             },
             hyperparams=dict(args.hyperparams),
         )

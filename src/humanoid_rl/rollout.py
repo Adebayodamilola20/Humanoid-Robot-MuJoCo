@@ -137,7 +137,7 @@ def play(
     cfg, model_path = _load(run_dir, prefer)
 
     console.rule(f"Playing {runs.relative(model_path)}")
-    env = _make_env(cfg, run_dir, model_path, "human", seed, scene_kwargs(scene))
+    env = _make_env(cfg, run_dir, model_path, "human", seed, scene_kwargs(scene, cfg.env_id))
 
     from humanoid_rl.train import load_model
 
@@ -198,7 +198,7 @@ def record(
 
     console.rule(f"Recording {runs.relative(model_path)}")
     make_kwargs = {k: v for k, v in (("width", width), ("height", height)) if v}
-    make_kwargs.update(scene_kwargs(scene))
+    make_kwargs.update(scene_kwargs(scene, cfg.env_id))
     env = _make_env(cfg, run_dir, model_path, "rgb_array", seed, make_kwargs)
 
     from humanoid_rl.train import load_model

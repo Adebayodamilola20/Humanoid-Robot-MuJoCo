@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
@@ -22,6 +23,7 @@ from stable_baselines3.common.vec_env import (
     VecNormalize,
 )
 
+from humanoid_rl import console
 from humanoid_rl.config import Config
 from humanoid_rl.tasks import DEFAULT_TASK, wrap_task
 
@@ -29,31 +31,55 @@ VECNORM_FILE = "vecnormalize.pkl"
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 
-# Alternative scenes for the MuJoCo humanoid. These change appearance only --
-# see the header of `humanoid_street.xml` and `tests/test_scene.py`, which
-# asserts the physics is identical to the stock model. That is what lets a
-# policy trained on `default` be viewed in `street` without retraining.
-SCENES: dict[str, Path | None] = {
-    "default": None,
-    "street": ASSETS_DIR / "humanoid_street.xml",
+
+@dataclass(frozen=True)
+class Scene:
+    """A visual replacement for an environment's own model file.
+
+    `env_ids` is the set of environments the file is a valid substitute for.
+    It matters because a scene is passed to `gym.make` as `xml_file`, which
+    replaces the *whole* model: handing `Humanoid-v5`'s body to
+    `HumanoidStandup-v5` starts it upright instead of lying on the floor, which
+    silently swaps the task for a different one. The observation shape is the
+    same either way, so nothing would fail.
+    """
+
+    path: Path | None
+    env_ids: tuple[str, ...] = ()
+
+
+# These change appearance only -- see the header of `humanoid_street.xml` and
+# `tests/test_scene.py`, which asserts the physics is identical to the stock
+# model. That is what lets a policy trained on `default` be viewed in `street`
+# without retraining.
+SCENES: dict[str, Scene] = {
+    "default": Scene(None),
+    "street": Scene(ASSETS_DIR / "humanoid_street.xml", ("Humanoid-v5",)),
 }
 
 
-def scene_kwargs(scene: str | None) -> dict:
-    """`gym.make` keyword arguments selecting a scene."""
+def scene_kwargs(scene: str | None, env_id: str) -> dict:
+    """`gym.make` keyword arguments selecting a scene for `env_id`."""
     if not scene or scene == "default":
         return {}
     try:
-        path = SCENES[scene]
+        chosen = SCENES[scene]
     except KeyError:
         raise SystemExit(
             f"Unknown scene {scene!r}. Choose from: {', '.join(SCENES)}"
         ) from None
-    if path is None:
+    if chosen.path is None:
         return {}
-    if not path.is_file():  # pragma: no cover - only if the package is broken
-        raise SystemExit(f"Scene file is missing: {path}")
-    return {"xml_file": str(path.resolve())}
+    if chosen.env_ids and env_id not in chosen.env_ids:
+        raise SystemExit(
+            f"Scene {scene!r} is built for {', '.join(chosen.env_ids)}, not {env_id!r}.\n"
+            "A scene replaces the environment's model file, so using it here would\n"
+            "change the physics and the starting pose rather than just the looks.\n"
+            "Use --scene default for this environment."
+        )
+    if not chosen.path.is_file():  # pragma: no cover - only if the package is broken
+        raise SystemExit(f"Scene file is missing: {chosen.path}")
+    return {"xml_file": str(chosen.path.resolve())}
 
 
 def ensure_registered(env_id: str) -> None:
@@ -156,6 +182,20 @@ def build_env(
         norm.training = training
         norm.norm_reward = training
         return norm
+
+    if not training:
+        # Fresh statistics mean an identity transform, so the policy is handed
+        # raw observations on a scale it has never seen. Measured on this
+        # project's own walking policy, that drops it from 7,753 reward to 154
+        # -- below the 125 a random policy scores. Silently returning a ruined
+        # policy is the worst outcome here: it looks like training failed.
+        console.warn(
+            "No observation statistics found for this policy.\n"
+            "  It was trained with normalisation, so without them it receives raw\n"
+            "  observations and will score close to random. This is a broken\n"
+            "  playback, not a bad policy.\n"
+            "  Expected a vecnormalize .pkl beside the checkpoint."
+        )
 
     return VecNormalize(
         venv,
